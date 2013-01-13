@@ -5,7 +5,7 @@
   "description": "Enhancements for Mechanical Turk.",
   "background": {
     "persistent": false,
-    "scripts": ["libs/jquery-1.8.3.js", "libs/jquery.indexeddb.js", "libs/log.js", "libs/queue.js", "background-scripts/background.js"]
+    "scripts": ["libs/jquery-1.8.3.js", "libs/jquery-indexeddb/jquery.indexeddb.js", "libs/log.js", "libs/queue.js", "background-scripts/background.js"]
   },
   "browser_action": {
     "default_icon": "icons/icon.png",

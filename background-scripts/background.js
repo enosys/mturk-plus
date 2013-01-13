@@ -22,9 +22,11 @@ monitor(1, 'statusUpdate',    statusUpdate);
 
 var requestQueue = new Queue(0.015);
 
+/*
 var responseRoot = $(document.createElement("div"));
 responseRoot.attr('id', 'response');
 $(document.body).append(responseRoot);
+*/
 
 
 
@@ -46,26 +48,27 @@ function getURL(url, callback) {
     requestQueue.enqueue('https://www.mturk.com' + url, function(url) {
 	log.debug('Fetching ' + url);
 
+	var response = $('<div>');
 	$.get(url).done(function(data) {
 	    log.debug('Received ' + url);
 
-	    $('#response').html(data);
+	    response.html(data);
 
-	    var loggedInUser = $('#user_name_field').text();
+	    var loggedInUser = response.find('#user_name_field').text();
 
 	    if (loggedInUser != 'Matt Wilson') {
 		log.error('Error: Different user logged in');
 	    } else {
-		callback();
+		callback(response);
 	    }
 	});
     });
 }
 
 function checkHit(groupID) {
-    getURL('/mturk/preview?groupID=' + groupID, function() {
+    getURL('/mturk/preview?groupID=' + groupID, function(response) {
 	log.debug('searching for hit');
-	var hit = $('iframe');
+	var hit = response.find('iframe');
 	if (hit) {
 	    log.debug('hit exists: ' + groupID);
 	} else {
@@ -75,13 +78,13 @@ function checkHit(groupID) {
 }
 
 function dashboardUpdate() {
-    getURL('/mturk/dashboard', function() {
+    getURL('/mturk/dashboard', function(response) {
 	var lastUpdated = $.now();
 
-	var workerID = $('.orange_text_right').text().slice(16);
+	var workerID = response.find('.orange_text_right').text().slice(16);
 	$.indexedDB('mt').objectStore('worker', true).put(workerID, 'workerID');
 
-	var curBonus = $('#bonus_earnings_amount').text();
+	var curBonus = response.find('#bonus_earnings_amount').text();
 	$.indexedDB('mt').objectStore('worker').get('lastBonus').done(function(r) {
 	    var lastBonus = r;
 
@@ -94,21 +97,31 @@ function dashboardUpdate() {
 }
 
 function accountUpdate() {
-    getURL('/mturk/youraccount', function() {
-	var accountBalance = $('#account_balance').text().trim();
+    getURL('/mturk/youraccount', function(response) {
+	var accountBalance = response.find('#account_balance').text().trim();
 
-	$.indexedDB('mt').objectStore('worker', true).put(accountBalance, 'accountBalance');
+	console.log(accountBalance);
+	$.indexedDB('mt').objectStore('worker', true).put(accountBalance, 'accountBalance')
+	 .always(function() {
+		 console.log('accountbalance fired');
+	 })
+	 .fail(function() {
+		 console.log('accountbalance failed');
+	 })
+         .done(function() {
+		 console.log('accountbalance done');
+	 });
     });
 }
 
 function statusUpdate() {
-    getURL('/mturk/status', function() {
-	$('table .greyBox tr.grayHead').remove();
+    getURL('/mturk/status', function(response) {
+	response.find('table .greyBox tr.grayHead').remove();
 
 	var currentStatuses = {};
 
 	/* Parse the statuses for each day */
-	$('table .greyBox tr').each(function(index, row) {
+	response.find('table .greyBox tr').each(function(index, row) {
 	    row = $(row);
 	    if (row.hasClass('even') || row.hasClass('odd')) {
 		var date, submitted, approved, rejected, pending;
@@ -198,8 +211,8 @@ function statusUpdate() {
 }
 
 function updateHitsPage(date, page) {
-    getURL('/mturk/statusdetail?sortType=All&encodedDate=' + date + '&pageNumber=' + page, function () {
-	$('#dailyActivityTable tr[valign]').each(function(index, row) {
+    getURL('/mturk/statusdetail?sortType=All&encodedDate=' + date + '&pageNumber=' + page, function (response) {
+	response.find('#dailyActivityTable tr[valign]').each(function(index, row) {
 	    var hitID, requesterID, requester, title, reward, status, feedback;
 
 	    $(row).children().each(function(index, col) {
