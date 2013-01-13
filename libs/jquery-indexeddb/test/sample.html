@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body>
+        <script type = "text/javascript" src="../lib/jquery.min.js">
+        </script>
+        <script type = "text/javascript" src = "../jquery.indexeddb.js">
+        </script>
+        <script type = "text/javascript" src = "sampleData.js">
+        </script>
+        <script type = "text/javascript">
+            function _(msg){
+            	console.info(">>>>", msg, arguments.callee.caller.arguments);
+            }
+            
+            function ok(){
+            	console.log(arguments)
+            }
+            
+            var start = nextTest = function(){
+            
+            }
+            
+            var equal = notEqual = function(){
+            	console.info(arguments);
+            }
+        </script>
+        <script type = "text/javascript">
+            $.indexedDB("SomeDatabase", {
+            	"schema": {
+            		"1": function(versionTransaction){
+            			console.log("Running update 1");
+            			var objectStore2 = versionTransaction.createObjectStore("b", {
+            				"keyPath": "id",
+            				"autoIncrement": true
+            			});
+            		}
+            	}
+            });
+        </script>
+    </body>
+</html>
