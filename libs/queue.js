@@ -5,7 +5,7 @@ function Queue(delay) {
 }
 
 Queue.prototype.enqueue = function(value, callback) {
-    log.debug('Enqueueing ' + value);
+    // log.debug('Enqueueing ' + value);
 
     this._queue.push({ 'value': value, 'callback': callback });
 
@@ -21,7 +21,7 @@ Queue.prototype.pause = function() {
 };
 
 Queue.prototype.run = function() {
-    log.debug('Running queue');
+    // log.debug('Running queue');
 
     if (this._paused) {
 	this._paused = false;
@@ -50,7 +50,7 @@ Queue.prototype._process = function() {
 	}
     };
 
-    log.debug('Scheduling next item: ' + item.value);
+    // log.debug('Scheduling next item: ' + item.value);
 
     chrome.alarms.onAlarm.addListener(listener);
     chrome.alarms.create('queue', { delayInMinutes: this._delay });
