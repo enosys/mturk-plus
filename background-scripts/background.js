@@ -39,27 +39,42 @@ function monitor(period, name, callback) {
     chrome.alarms.create(name, { delayInMinutes: 0.1, periodInMinutes: period });
 }
 
-function getURL(url, callback) {
+function getURL(url) {
     // log.debug('Queueing ' + url);
+
+    var deferred = $.Deferred();
 
     requestQueue.enqueue('https://www.mturk.com' + url, function(url) {
 	// log.debug('Fetching ' + url);
 
 	var response = $('<div>');
-	$.get(url).done(function(data) {
+	$.ajax({
+	    'url':     url,
+	    'timeout': 20000
+	 })
+	 .fail(function (jqXHR, textStatus, errorThrown) {
+	     log.error(url + ': ' + errorThrown);
+	     deferred.reject('User not logged in');
+	 })
+	 .done(function (data) {
 	    // log.debug('Received ' + url);
 
 	    response.html(data);
+	    response.remove('img').remove('script');
 
 	    var loggedInUser = response.find('#user_name_field').text();
 
+	    // XXX
 	    if (loggedInUser != 'Matt Wilson') {
-		log.error('Error: Different user logged in');
+		log.error('Error: User not logged in');
+		deferred.reject('User not logged in');
 	    } else {
-		callback(response);
+		deferred.resolve(response);
 	    }
 	});
     });
+
+    return deferred.promise();
 }
 
 function checkHit(groupID) {
@@ -74,84 +89,118 @@ function checkHit(groupID) {
     });
 }
 
-function dashboardUpdate() {
-    getURL('/mturk/dashboard', function(response) {
-	var lastUpdated = $.now();
+function parseDashboardPage(page) {
+    var parseUSD = function (selector) {
+	var usd = page.find(selector).text();
+	return parseFloat(usd.slice(1));
+    };
 
-	var workerID = response.find('.orange_text_right').text().slice(16);
-	var curBonus = response.find('#bonus_earnings_amount').text();
+    var bonuses          = parseUSD('#bonus_earnings_amount');
+    var approvedEarnings = parseUSD('#approved_hits_earnings_amount');
+    var totalEarnings    = parseUSD('#total_earnings_amount');
+
+    var hitMetrics = page.find('> table:eq(5) .metrics-table > tbody > tr');
+
+    var hits = {};
+    var acceptedHitsTable = hitMetrics.find('> td:eq(0)');
+    hits.accepted  = parseInt(acceptedHitsTable.find('tr:eq(1) td:eq(1)').text());
+    hits.submitted = parseInt(acceptedHitsTable.find('tr:eq(2) td:eq(1)').text());
+    hits.returned  = parseInt(acceptedHitsTable.find('tr:eq(3) td:eq(1)').text());
+    hits.abandoned = parseInt(acceptedHitsTable.find('tr:eq(4) td:eq(1)').text());
+
+    var submittedHitsTable = hitMetrics.find('> td:eq(1)');
+    hits.approved = parseInt(submittedHitsTable.find('tr:eq(2) td:eq(1)').text());
+    hits.rejected = parseInt(submittedHitsTable.find('tr:eq(3) td:eq(1)').text());
+    hits.pending  = parseInt(submittedHitsTable.find('tr:eq(4) td:eq(1)').text());
+
+    var workerID = page.find('.orange_text_right').text().slice(16);
+
+    return {
+	'workerID': workerID,
+	'hits':     hits,
+	'earnings': {
+	    'bonuses':  bonuses,
+	    'approved': approvedEarnings,
+	    'total':    totalEarnings
+	}
+    };
+}
+
+function dashboardUpdate() {
+    return getURL('/mturk/dashboard').then(function(page) {
+	var dashboardPage = parseDashboardPage(page);
+	return dashboardPage;
     });
+}
+
+function parseAccountPage(page) {
+    var accountPage = {};
+
+    accountPage.balance = page.find('#account_balance').text().trim();
+
+    return accountPage;
 }
 
 function accountUpdate() {
-    getURL('/mturk/youraccount', function(response) {
-	var accountBalance = response.find('#account_balance').text().trim();
+    return getURL('/mturk/youraccount').then(function (page) {
+	var accountPage = parseAccountPage(page);
+	return accountPage;
     });
 }
 
+function parseStatusPage(page) {
+    page.find('table .greyBox tr.grayHead').remove();
+
+    var statuses = [];
+    page.find('table .greyBox tr').each(function(index, row) {
+	row = $(row);
+
+	var status       = {};
+	status.date      = row.find('.statusDateColumnValue a')[0].href.split('=')[1];
+	status.submitted = parseInt(row.find('.statusSubmittedColumnValue').text());
+	status.approved  = parseInt(row.find('.statusApprovedColumnValue').text());
+	status.rejected  = parseInt(row.find('.statusRejectedColumnValue').text());
+	status.pending   = parseInt(row.find('.statusPendingColumnValue').text());
+	status.earnings  = parseFloat(row.find('.statusEarningsColumnValue').text().slice(1));
+
+	statuses.push(status);
+    });
+
+    return statuses;
+}
+
 function statusUpdate() {
-    getURL('/mturk/status', function(response) {
-	response.find('table .greyBox tr.grayHead').remove();
-
-	var currentStatuses = {};
-
-	/* Parse the statuses for each day */
-	response.find('table .greyBox tr').each(function(index, row) {
-	    row = $(row);
-	    if (row.hasClass('even') || row.hasClass('odd')) {
-		var date, submitted, approved, rejected, pending;
-
-		row.children().each(function(index, col) {
-		    col = $(col);
-		    if (col.hasClass('statusDateColumnValue')) {
-			date = col.children()[0].href.split('=')[1];
-		    } else if (col.hasClass('statusSubmittedColumnValue')) {
-			submitted = col.text();
-		    } else if (col.hasClass('statusApprovedColumnValue')) {
-			approved = col.text();
-		    } else if (col.hasClass('statusRejectedColumnValue')) {
-			rejected = col.text();
-		    } else if (col.hasClass('statusPendingColumnValue')) {
-			pending = col.text();
-		    }
-		});
-
-		var statusSummary = {
-		    'submitted': submitted,
-		    'approved':  approved,
-		    'rejected':  rejected,
-		    'pending':   pending
-		};
-
-		currentStatuses[date] = statusSummary;
-	    }
-	});
+    return getURL('/mturk/status').then(function (page) {
+	var currentStatuses = parseStatusPage(page);
 
 	/* 
 	 * Compare the new hit status counts with the old ones to see which
 	 * dates we need to update.
 	 */
-	$.each(currentStatuses, function(currentDate, currentStatus) {
+	$.each(currentStatuses, function(index, currentStatus) {
 	    db.transaction(function (tx) {
-		tx.executeSql('SELECT * FROM hitStatusSummary WHERE date = ?', [currentDate], function (tx, results) {
-		    var previousStatus = results.rows.item(0);
-		    var currentStatus  = currentStatuses[currentDate];
-
+		tx.executeSql('SELECT * FROM hitStatusSummary WHERE date = ?', [currentStatus.date], function (tx, results) {
+		    /* XXX only update on successful update of all hits as well */
 		    tx.executeSql('INSERT OR REPLACE INTO hitStatusSummary (date, submitted, approved, rejected, pending) ' +
-			          'VALUES (?, ?, ?, ?, ?)', [currentDate, currentStatus.submitted, currentStatus.approved, currentStatus.rejected, currentStatus.pending],
+			          'VALUES (?, ?, ?, ?, ?)', [currentStatus.date, currentStatus.submitted, currentStatus.approved, currentStatus.rejected, currentStatus.pending],
 				  function (tx, results) {},
 				  function (tx, error) { console.log('insert hitstatussummary error', error); });
 
 		    /* No previous data for this day, update everything for this day. */
-		    if (previousStatus == undefined) {
-			log.debug(currentDate + ' not found, updating');
-			updateHitsFrom(currentDate, currentStatus);
+		    if (results.rows.length == 0) {
+			log.debug(currentStatus.date + ' not found, updating');
+			updateHitsFrom(currentStatus.date, currentStatus);
+			return;
+		    }
+
+		    var previousStatus = results.rows.item(0);
 		    /* Nothing changed for this day, do nothing */
-		    } else if (   currentStatus.submitted == previousStatus.submitted
-			       && currentStatus.pending   == previousStatus.pending
-			       && currentStatus.rejected  == previousStatus.rejected
-			       && currentStatus.approved  == previousStatus.approved) {
-			log.debug('no change: ' + currentDate);
+
+		    if (   currentStatus.submitted == previousStatus.submitted
+			&& currentStatus.pending   == previousStatus.pending
+			&& currentStatus.rejected  == previousStatus.rejected
+			&& currentStatus.approved  == previousStatus.approved) {
+			log.debug('no change: ' + currentStatus.date);
 		    /*
 		     * New hits have been submitted but nothing has been approved
 		     * or rejected since last check; only need to check the last
@@ -164,8 +213,8 @@ function statusUpdate() {
 			var previousNumPages = Math.ceil(previousStatus.submitted / 25);
 
 			for (var page = previousNumPages; page <= currentNumPages; page++) {
-			    log.debug('new hits: ' + currentDate + ' ' + page);
-			    // updateHitsPage(currentDate, page);
+			    log.debug('new hits: ' + currentStatus.date + ' ' + page);
+			    updateHitsPage(currentStatus.date, page);
 			}
 		    }
 		    /*
@@ -175,12 +224,12 @@ function statusUpdate() {
 		    else if (   currentStatus.submitted == previousStatus.submitted
 			     && currentStatus.pending   <  previousStatus.pending) {
 			/* XXX */
-			log.debug('pending down: ' + currentDate + ' ' + currentStatus);
-			//updateHitsFrom(currentDate, currentStatus);
+			log.debug('pending down: ' + currentStatus.date + ' ' + currentStatus);
+			updateHitsFrom(currentStatus.date, currentStatus);
 		    } else {
 			/* update everything */
-			log.debug('update everything: ' + currentDate + ' ' + currentStatus);
-			//updateHitsFrom(currentDate, currentStatus);
+			log.debug('update everything: ' + currentStatus.date + ' ' + currentStatus);
+			updateHitsFrom(currentStatus.date, currentStatus);
 		    }
 		});
 	    });
@@ -188,38 +237,39 @@ function statusUpdate() {
     });
 }
 
+function parseHitsPage(page) {
+    var hits = [];
+
+    page.find('#dailyActivityTable tr[valign]').each(function(index, row) {
+	row = $(row);
+
+	var hit = {};
+
+	hit.title    = row.find('.statusdetailTitleColumnValue').text().trim();
+	hit.status   = row.find('.statusdetailStatusColumnValue').text().trim();
+	hit.feedback = row.find('.statusdetailRequesterFeedbackColumnValue').text().trim();
+	hit.reward   = parseFloat(row.find('.statusdetailAmountColumnValue').text().slice(1));
+
+	requesterElement = row.find('.statusdetailRequesterColumnValue');
+
+	var urlParams   = requesterElement.find('a').attr('href').split('?')[1].split('&');
+	hit.hitID       = urlParams[0].split('=')[1].split('+')[5];
+	hit.requesterID = urlParams[1].split('=')[1];
+	hit.requester   = requesterElement.text().trim();
+
+	hits.push(hit);
+    });
+
+    return hits;
+}
+
 function updateHitsPage(date, page) {
-    getURL('/mturk/statusdetail?sortType=All&encodedDate=' + date + '&pageNumber=' + page, function (response) {
-	response.find('#dailyActivityTable tr[valign]').each(function(index, row) {
-	    var hitID, requesterID, requester, title, reward, status, feedback;
+    return getURL('/mturk/statusdetail?sortType=All&encodedDate=' + date + '&pageNumber=' + page).then(function (page) {
+	var hits = parseHitsPage(page);
 
-	    $(row).children().each(function(index, col) {
-		col = $(col);
-
-		if (col.hasClass('statusdetailRequesterColumnValue')) {
-		    requester = col.text().trim();
-
-		    var urlParams = col.find('a').attr('href').split('?')[1].split('&');
-		    hitID         = urlParams[0].split('=')[1].split('+')[5];
-		    requesterID   = urlParams[1].split('=')[1];
-
-		} else if (col.hasClass('statusdetailTitleColumnValue')) {
-		    title = col.text();
-		} else if (col.hasClass('statusdetailAmountColumnValue')) {
-		    reward = parseFloat(col.text().slice(1));
-		} else if (col.hasClass('statusdetailStatusColumnValue')) {
-		    status = col.text();
-		} else if (col.hasClass('statusdetailRequesterFeedbackColumnValue')) {
-		    feedback = col.text().trim();
-		}
-	    });
-
+	$.each(hits, function (index, hit) {
 	    sql('INSERT OR REPLACE INTO hits (hitID, requesterID, requester, title, reward, status, feedback, date, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-		[hitID, requesterID, requester, title, reward, status, feedback, date, page])
-	    .fail(function (tx, error) {
-                console.log('insert hits error', error);
-	        console.log([hitID, requesterID, requester, title, reward, status, feedback, date, page]);
-	    });
+		[hit.hitID, hit.requesterID, hit.requester, hit.title, hit.reward, hit.status, hit.feedback, hit.date, hit.page]);
 	});
     });
 }
@@ -238,7 +288,7 @@ function totalPending() {
 	var reward = row['SUM(reward)'];
 
 	return reward;
-    }).promise();
+    });
 }
 
 function projectedEarnings(date) {
@@ -247,7 +297,7 @@ function projectedEarnings(date) {
 	var reward = row['SUM(reward)'];
 
 	return reward;
-    }).promise();
+    });
 }
 
 function sql(statement, sqlArguments) {
@@ -269,5 +319,7 @@ function sql(statement, sqlArguments) {
 	deferred.reject(error);
     });
 
-    return deferred;
+    deferred.fail(log.error);
+
+    return deferred.promise();
 }
